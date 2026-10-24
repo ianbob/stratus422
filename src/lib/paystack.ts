@@ -1,0 +1,3 @@
+export const MEMBERSHIP_FEE_KES = 1;
+export const MEMBERSHIP_FEE_MINOR = MEMBERSHIP_FEE_KES * 100;
+export const PAYSTACK_CURRENCY = "KES";

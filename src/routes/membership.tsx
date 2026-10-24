@@ -1,5 +1,51 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { useState } from "react";
 import { CheckCircle2, ArrowRight, PiggyBank, TrendingUp, Users, Download } from "lucide-react";
+
+import { MEMBERSHIP_FEE_KES } from "../lib/paystack";
+import { initializeMembershipPayment } from "../lib/paystack.functions";
+
+type PaystackInlineOptions = {
+  key: string;
+  email: string;
+  amount: number;
+  currency: string;
+  reference: string;
+  onSuccess: (transaction: { reference: string }) => void;
+  onCancel: () => void;
+};
+
+type PaystackInlinePopup = {
+  newTransaction: (options: PaystackInlineOptions) => void;
+};
+
+declare global {
+  interface Window {
+    PaystackPop?: new () => PaystackInlinePopup;
+  }
+}
+
+let paystackScriptPromise: Promise<void> | undefined;
+
+function loadPaystackInline(): Promise<void> {
+  if (window.PaystackPop) return Promise.resolve();
+  if (!paystackScriptPromise) {
+    paystackScriptPromise = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "https://js.paystack.co/v2/inline.js";
+      script.async = true;
+      script.onload = () => resolve();
+      script.onerror = () => {
+        paystackScriptPromise = undefined;
+        reject(new Error("Unable to load Paystack checkout. Please try again."));
+      };
+      document.head.appendChild(script);
+    });
+  }
+  return paystackScriptPromise.then(() => {
+    if (!window.PaystackPop) throw new Error("Paystack checkout did not initialize.");
+  });
+}
 
 export const Route = createFileRoute("/membership")({
   head: () => ({
@@ -8,13 +54,13 @@ export const Route = createFileRoute("/membership")({
       {
         name: "description",
         content:
-          "Join Menger Sacco with your National ID and KES 500. Save from KES 200 a week, earn annual dividends and borrow up to 3x your savings.",
+          "Join Menger Sacco with your National ID and a temporary KES 1 test registration fee. Save from KES 200 a week, earn annual dividends and borrow up to 3x your savings.",
       },
       { property: "og:title", content: "Become a Member — Menger Sacco" },
       {
         property: "og:description",
         content:
-          "Membership open to all Kenyans. Save from KES 200/week, earn dividends, borrow up to 3x your savings.",
+          "Membership open to all Kenyans. Save from KES 200/week, earn dividends and borrow up to 3x your savings.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
@@ -26,7 +72,7 @@ export const Route = createFileRoute("/membership")({
 const requirements = [
   "Kenyan National ID or valid passport",
   "One passport-size photo",
-  "KES 500 one-time membership fee",
+  "KES 1 one-time membership fee (temporary test amount)",
   "KES 1,000 minimum share capital (payable in instalments)",
   "KRA PIN certificate",
 ];
@@ -50,6 +96,41 @@ const benefits = [
 ];
 
 function MembershipPage() {
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const handlePayment = async () => {
+    setSubmitting(true);
+    setError(null);
+
+    try {
+      const publicKey = import.meta.env["VITE_PAYSTACK_PUBLIC_KEY"];
+      if (!publicKey) throw new Error("Payments are not configured. Add VITE_PAYSTACK_PUBLIC_KEY.");
+
+      const payment = await initializeMembershipPayment();
+      await loadPaystackInline();
+
+      new window.PaystackPop!().newTransaction({
+        key: publicKey,
+        email: payment.email,
+        amount: payment.amount,
+        currency: payment.currency,
+        reference: payment.reference,
+        onSuccess: (transaction) => {
+          window.location.assign(`/account?reference=${encodeURIComponent(transaction.reference)}`);
+        },
+        onCancel: () => {
+          setError("Payment was cancelled.");
+          setSubmitting(false);
+        },
+      });
+    } catch (paymentError) {
+      setError(
+        paymentError instanceof Error ? paymentError.message : "Unable to start payment. Please try again.",
+      );
+      setSubmitting(false);
+    }
+  };
+
   return (
     <div className="mx-auto max-w-6xl px-4 py-16">
       <div className="text-center">
@@ -83,7 +164,27 @@ function MembershipPage() {
           </ul>
         </div>
         <div className="rounded-2xl bg-primary p-8 text-primary-foreground">
-          <h2 className="text-2xl font-bold">Three ways to register</h2>
+          <h2 className="text-2xl font-bold">Pay your membership fee</h2>
+          <p className="mt-2 text-sm text-primary-foreground/80">
+            KES {MEMBERSHIP_FEE_KES} test payment. This temporary amount is not the official registration fee.
+          </p>
+          <div className="mt-6">
+            {error ? (
+              <p role="alert" className="rounded-lg bg-destructive px-3 py-2 text-sm text-destructive-foreground">
+                {error}
+              </p>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => void handlePayment()}
+              disabled={submitting}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-gold px-6 py-3 font-semibold text-gold-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-70"
+            >
+              {submitting ? "Connecting to Paystack..." : `Pay KES ${MEMBERSHIP_FEE_KES}`}
+              <ArrowRight className="h-4 w-4" />
+            </button>
+          </div>
+          <h2 className="mt-10 text-2xl font-bold">Other ways to register</h2>
           <ol className="mt-6 space-y-5">
             <li>
               <p className="font-semibold">1. Visit any branch</p>
